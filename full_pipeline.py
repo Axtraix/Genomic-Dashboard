@@ -13,9 +13,6 @@ from pydantic import BaseModel, Field, field_validator
 # Configure Logging for safe API debugging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# =====================================================================
-# CONFIGURATION & MARKET DATA
-# =====================================================================
 
 # Target Gene Database with Market Research Metrics (Prevalence on a 1-10 scale)
 MARKET_RESEARCH_GENES = {
@@ -28,10 +25,6 @@ MARKET_RESEARCH_GENES = {
     "CFTR":    {"disease": "Cystic Fibrosis", "prevalence": 7.0}
 }
 
-
-# =====================================================================
-# STEP 1 & 2: API CONNECTION & DATA EXTRACTION
-# =====================================================================
 
 class TrialRecord(BaseModel):
     """Pydantic model for strict field extraction and validation."""
@@ -132,9 +125,6 @@ def fetch_clinical_trials(keywords: List[str], max_pages_per_keyword: int = 2) -
     return df
 
 
-# =====================================================================
-# STEP 3: MARKET RESEARCH & IP SATURATION
-# =====================================================================
 
 def fetch_patent_data(gene_targets: List[str]) -> Dict[str, int]:
     """Step 3: Queries Europe PMC REST API for patent literature saturation per gene."""
@@ -193,18 +183,17 @@ def analyze_market_opportunity(trials_df: pd.DataFrame, patent_counts: Dict[str,
     return pd.DataFrame(rows)
 
 
-# =====================================================================
-# STEP 4: WEBSITE & DASHBOARD (FOREST / BOTANICAL THEME)
-# =====================================================================
+
+# (FOREST / BOTANICAL THEME)
+
 
 def build_forest_dashboard(trials_df: pd.DataFrame, market_df: pd.DataFrame, output_filepath: str = "crispr_dashboard.html"):
     """Step 4: Renders a website formatted with custom HTML & CSS inspired by a forest motif."""
     logging.info("[Step 4] Building forest-themed HTML website...")
 
-    # Color Palette: Deep Moss Green, Sage, Emerald Accent, Warm Amber/Gold
     forest_colors = ["#2A4735", "#52B788", "#74C69D", "#D4AF37", "#1B3B2B", "#85A389"]
 
-    # Chart 1: Active Trials by Phase
+
     phase_counts = trials_df["phase"].value_counts().reset_index() if not trials_df.empty else pd.DataFrame({"phase": ["N/A"], "count": [0]})
     fig_phase = px.bar(
         phase_counts,
@@ -223,7 +212,6 @@ def build_forest_dashboard(trials_df: pd.DataFrame, market_df: pd.DataFrame, out
     fig_phase.update_xaxes(showgrid=False, zeroline=False, color="#A3C1AD")
     fig_phase.update_yaxes(showgrid=True, gridcolor="#1B3B2B", color="#A3C1AD")
 
-    # Chart 2: Patent Saturation vs Clinical Activity
     fig_scatter = px.scatter(
         market_df,
         x="Patent Count",
@@ -248,7 +236,7 @@ def build_forest_dashboard(trials_df: pd.DataFrame, market_df: pd.DataFrame, out
     phase_chart_html = fig_phase.to_html(full_html=False, include_plotlyjs="cdn")
     scatter_chart_html = fig_scatter.to_html(full_html=False, include_plotlyjs="cdn")
 
-    # HTML Tables
+
     table_market = market_df.to_html(index=False, classes="forest-table")
     
     display_trials = trials_df[["nct_id", "brief_title", "overall_status", "phase", "lead_sponsor_name"]].head(12)
@@ -257,7 +245,6 @@ def build_forest_dashboard(trials_df: pd.DataFrame, market_df: pd.DataFrame, out
 
     top_opportunity = market_df.loc[market_df["Opportunity Score"].idxmax()]["Gene Target"] if not market_df.empty else "N/A"
 
-    # Botanical / Forest Theme CSS & HTML Structure
     html_template = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
