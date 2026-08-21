@@ -1,88 +1,31 @@
-
 <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <title>CRISPR / Gene Therapy IP Dashboard</title>
-        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    </head>
-    <body>
-        <div class="text-center my-4">
-            <h2>CRISPR & Gene Therapy Intelligence Dashboard</h2>
-            <p>Clinical trial tracking & target gene IP saturation analysis</p>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+    <div>
+        <div>
             <div>
-                <h5>Target Gene Opportunity Matrix</h5>
-                <div class="table-responsive"><table border="class="table-light">
-  <thead>
-    <tr style="text-align: middle">
-      <th>Gene Target</th>
-      <th>Indication</th>
-      <th>Active Trials</th>
-      <th>Patent Count</th>
-      <th>Prevalence Score</th>
-      <th>Opportunity Index</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>PCSK9</td>
-      <td>Hypercholesterolemia</td>
-      <td>0</td>
-      <td>0</td>
-      <td>9.5</td>
-      <td>9.5</td>
-    </tr>
-    <tr>
-      <td>HTT</td>
-      <td>Huntington's Disease</td>
-      <td>0</td>
-      <td>0</td>
-      <td>4.0</td>
-      <td>4.0</td>
-    </tr>
-    <tr>
-      <td>HBB</td>
-      <td>Sickle Cell / Thalassemia</td>
-      <td>1</td>
-      <td>0</td>
-      <td>8.0</td>
-      <td>4.0</td>
-    </tr>
-    <tr>
-      <td>TTR</td>
-      <td>ATTR Amyloidosis</td>
-      <td>0</td>
-      <td>0</td>
-      <td>5.5</td>
-      <td>5.5</td>
-    </tr>
-    <tr>
-      <td>ANGPTL3</td>
-      <td>Dyslipidemia</td>
-      <td>0</td>
-      <td>0</td>
-      <td>8.5</td>
-      <td>8.5</td>
-    </tr>
-    <tr>
-      <td>DNMT1</td>
-      <td>Hereditary Sensory Neuropathy</td>
-      <td>0</td>
-      <td>0</td>
-      <td>2.5</td>
-      <td>2.5</td>
-    </tr>
-    <tr>
-      <td>CFTR</td>
-      <td>Cystic Fibrosis</td>
-      <td>0</td>
-      <td>0</td>
-      <td>7.0</td>
-      <td>7.0</td>
-    </tr>
-  </tbody>
-</table></div>
+                <!-- Raw API data will render here -->
+                <pre id="api-data"></pre>
             </div>
-    </body>
-    </html>
-    
+        </div>
+    </div>
+
+    <script>
+        const url = "https://clinicaltrials.gov/api/v2/studies?query.cond=Diabetes&filter.overallStatus=RECRUITING&pageSize=5";
+
+        fetch(url)
+            .then(response => response.json())
+            .then(data => {
+                // Print the unformatted raw text directly on screen
+                document.getElementById('api-data').innerText = JSON.stringify(data);
+            })
+            .catch(error => {
+                document.getElementById('api-data').innerText = "Error loading data: " + error;
+            });
+    </script>
+</body>
+</html>
