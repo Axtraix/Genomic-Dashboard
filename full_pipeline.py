@@ -2,22 +2,21 @@ import os
 import re
 import math
 import logging
+import webbrowser
 import requests
 import pandas as pd
 import numpy as np
 import plotly.express as px
-import plotly.graph_objects as go
 from typing import List, Optional, Dict
 from pydantic import BaseModel, Field, field_validator
 
-# Configure Logging for safe API debugging
+# Configure Logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 # =====================================================================
 # CONFIGURATION & MARKET DATA
 # =====================================================================
 
-# Target Gene Database with Market Research Metrics (Prevalence on a 1-10 scale)
 MARKET_RESEARCH_GENES = {
     "PCSK9":   {"disease": "Hypercholesterolemia", "prevalence": 9.5},
     "HTT":     {"disease": "Huntington's Disease", "prevalence": 4.0},
@@ -28,13 +27,11 @@ MARKET_RESEARCH_GENES = {
     "CFTR":    {"disease": "Cystic Fibrosis", "prevalence": 7.0}
 }
 
-
 # =====================================================================
-# STEP 1 & 2: API CONNECTION & DATA EXTRACTION
+# STEP 1 & 2: API CONNECTION & STRICT DATA EXTRACTION
 # =====================================================================
 
 class TrialRecord(BaseModel):
-    """Pydantic model for strict field extraction and validation."""
     nct_id: str = Field(..., description="NCTId")
     brief_title: str = Field(..., description="BriefTitle")
     official_title: Optional[str] = "N/A"
@@ -46,7 +43,7 @@ class TrialRecord(BaseModel):
 
     @field_validator("nct_id", mode="before")
     def validate_nct(cls, v):
-        return v if v and str(v).strip() != "" else "UNKNOWN_NCT"
+        return v if v and str(v).strip() != "" else "N/A"
 
     @field_validator("brief_title", "overall_status", "phase", "lead_sponsor_name", mode="before")
     def sanitize_strings(cls, v):
@@ -56,7 +53,7 @@ class TrialRecord(BaseModel):
 
 
 def extract_study_fields(study_data: dict) -> Optional[TrialRecord]:
-    """Step 2: Safely extracts required NCTId, BriefTitle, OverallStatus, Phase, and LeadSponsorName."""
+    """Safely extracts NCTId, BriefTitle, OverallStatus, Phase, and LeadSponsorName."""
     try:
         protocol = study_data.get("protocolSection", {})
         
@@ -67,11 +64,9 @@ def extract_study_fields(study_data: dict) -> Optional[TrialRecord]:
         conditions_module = protocol.get("conditionsModule", {})
         interventions_module = protocol.get("armsInterventionsModule", {})
         
-        # Format Phase array to clean string
         phases = design_module.get("phases", ["Not Specified"])
         phase_str = ", ".join(phases) if isinstance(phases, list) else str(phases)
         
-        # Interventions array extraction
         interventions_raw = interventions_module.get("interventions", [])
         intervention_names = [i.get("name", "") for i in interventions_raw if i.get("name")]
 
@@ -86,20 +81,25 @@ def extract_study_fields(study_data: dict) -> Optional[TrialRecord]:
             interventions=intervention_names
         )
     except Exception as e:
-        logging.warning(f"Error parsing study record: {e}")
+        logging.warning(f"Parsing error: {e}")
         return None
 
 
 def fetch_clinical_trials(keywords: List[str], max_pages_per_keyword: int = 2) -> pd.DataFrame:
-    """Step 1: Robust API connection with timeouts and retry safety."""
-    logging.info("[Step 1] Connecting to ClinicalTrials.gov API v2...")
+    """Connects to ClinicalTrials.gov v2 API and extracts records."""
+    logging.info("[Step 1/4] Querying ClinicalTrials.gov v2 API...")
     endpoint = "https://clinicaltrials.gov/api/v2/studies"
     records = []
     
     for term in keywords:
         page_token = None
         for page in range(max_pages_per_keyword):
-            params = {"query.term": term, "pageSize": 50, "format": "json"}
+            params = {
+                "query.term": term, 
+                "pageSize": 50, 
+                "format": "json",
+                "countTotal": "true"
+            }
             if page_token:
                 params["pageToken"] = page_token
                 
@@ -108,11 +108,10 @@ def fetch_clinical_trials(keywords: List[str], max_pages_per_keyword: int = 2) -
                 response.raise_for_status()
                 payload = response.json()
             except Exception as err:
-                logging.error(f"Failed to fetch term '{term}' on page {page + 1}: {err}")
+                logging.error(f"Failed to fetch term '{term}': {err}")
                 break
 
-            studies = payload.get("studies", [])
-            for study in studies:
+            for study in payload.get("studies", []):
                 record = extract_study_fields(study)
                 if record:
                     records.append(record.model_dump())
@@ -124,21 +123,20 @@ def fetch_clinical_trials(keywords: List[str], max_pages_per_keyword: int = 2) -
     df = pd.DataFrame(records)
     if not df.empty:
         df = df.drop_duplicates(subset=["nct_id"]).reset_index(drop=True)
-        logging.info(f"[Step 2] Successfully extracted {len(df)} unique trial records.")
+        logging.info(f"[Step 2/4] Successfully extracted {len(df)} clinical study records.")
     else:
-        logging.warning("No records fetched. Creating empty fallback DataFrame.")
         df = pd.DataFrame(columns=["nct_id", "brief_title", "official_title", "overall_status", "phase", "lead_sponsor_name", "conditions", "interventions"])
     
     return df
 
 
 # =====================================================================
-# STEP 3: MARKET RESEARCH & IP SATURATION
+# STEP 3: MARKET RESEARCH & PATENT DENSITY
 # =====================================================================
 
 def fetch_patent_data(gene_targets: List[str]) -> Dict[str, int]:
-    """Step 3: Queries Europe PMC REST API for patent literature saturation per gene."""
-    logging.info("[Step 3] Gathering market research & patent saturation data...")
+    """Queries Europe PMC REST API for patent literature saturation per gene."""
+    logging.info("[Step 3/4] Fetching IP & patent counts via Europe PMC API...")
     patent_counts = {}
     url = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
     
@@ -150,15 +148,14 @@ def fetch_patent_data(gene_targets: List[str]) -> Dict[str, int]:
                 patent_counts[gene] = res.json().get("hitCount", 0)
             else:
                 patent_counts[gene] = 0
-        except Exception as e:
-            logging.warning(f"Could not reach Europe PMC API for {gene}: {e}")
+        except Exception:
             patent_counts[gene] = 0
 
     return patent_counts
 
 
 def analyze_market_opportunity(trials_df: pd.DataFrame, patent_counts: Dict[str, int]) -> pd.DataFrame:
-    """Maps gene targets in trials and computes Opportunity Index."""
+    """Calculates Opportunity Score per gene target."""
     def detect_genes(row):
         text = f"{row['brief_title']} {row['official_title']} {' '.join(row['conditions'])} {' '.join(row['interventions'])}"
         found = [g for g in MARKET_RESEARCH_GENES.keys() if re.search(r'\b' + re.escape(g) + r'\b', text, re.IGNORECASE)]
@@ -169,7 +166,6 @@ def analyze_market_opportunity(trials_df: pd.DataFrame, patent_counts: Dict[str,
         exploded = trials_df.explode("detected_genes")
         gene_trial_counts = exploded["detected_genes"].value_counts().to_dict()
     else:
-        trials_df["detected_genes"] = [[]]
         gene_trial_counts = {}
 
     rows = []
@@ -178,7 +174,6 @@ def analyze_market_opportunity(trials_df: pd.DataFrame, patent_counts: Dict[str,
         patents = patent_counts.get(gene, 0)
         prev = meta["prevalence"]
         
-        # Formula: Opportunity Index = Prevalence / ((Active Trials + 1) * log10(Patents + 10))
         opp_index = round(prev / ((active_trials + 1) * math.log10(patents + 10)), 2)
         
         rows.append({
@@ -194,36 +189,34 @@ def analyze_market_opportunity(trials_df: pd.DataFrame, patent_counts: Dict[str,
 
 
 # =====================================================================
-# STEP 4: WEBSITE & DASHBOARD (FOREST / BOTANICAL THEME)
+# STEP 4: HTML & JAVASCRIPT BOTANICAL DASHBOARD
 # =====================================================================
 
 def build_forest_dashboard(trials_df: pd.DataFrame, market_df: pd.DataFrame, output_filepath: str = "crispr_dashboard.html"):
-    """Step 4: Renders a website formatted with custom HTML & CSS inspired by a forest motif."""
-    logging.info("[Step 4] Building forest-themed HTML website...")
+    """Generates an interactive dashboard with botanical fonts and search filters."""
+    logging.info("[Step 4/4] Generating HTML website dashboard...")
 
-    # Color Palette: Deep Moss Green, Sage, Emerald Accent, Warm Amber/Gold
-    forest_colors = ["#2A4735", "#52B788", "#74C69D", "#D4AF37", "#1B3B2B", "#85A389"]
-
-    # Chart 1: Active Trials by Phase
+    # Plotly Chart 1: Pipeline Stage Distribution
     phase_counts = trials_df["phase"].value_counts().reset_index() if not trials_df.empty else pd.DataFrame({"phase": ["N/A"], "count": [0]})
     fig_phase = px.bar(
         phase_counts,
         x="phase",
         y="count",
-        labels={"phase": "Trial Phase", "count": "Number of Studies"},
+        labels={"phase": "Trial Phase", "count": "Studies"},
         title="Clinical Trial Pipeline Stage Distribution",
         color_discrete_sequence=["#52B788"]
     )
     fig_phase.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#E6EFE9", family="Georgia, serif"),
+        font=dict(color="#E8EFE9", family="'Plus Jakarta Sans', sans-serif"),
+        title_font=dict(family="'Cinzel', serif", color="#D4AF37", size=18),
         margin=dict(l=20, r=20, t=50, b=20)
     )
-    fig_phase.update_xaxes(showgrid=False, zeroline=False, color="#A3C1AD")
+    fig_phase.update_xaxes(showgrid=False, color="#A3C1AD")
     fig_phase.update_yaxes(showgrid=True, gridcolor="#1B3B2B", color="#A3C1AD")
 
-    # Chart 2: Patent Saturation vs Clinical Activity
+    # Plotly Chart 2: Patent Density vs Clinical Activity
     fig_scatter = px.scatter(
         market_df,
         x="Patent Count",
@@ -232,14 +225,15 @@ def build_forest_dashboard(trials_df: pd.DataFrame, market_df: pd.DataFrame, out
         color="Opportunity Score",
         hover_name="Gene Target",
         text="Gene Target",
-        title="IP Saturation vs. Clinical Activity",
+        title="IP Saturation vs. Clinical Trial Density",
         color_continuous_scale=["#1B3B2B", "#52B788", "#D4AF37"]
     )
     fig_scatter.update_traces(textposition="top center", marker=dict(line=dict(width=1, color="#D4AF37")))
     fig_scatter.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#E6EFE9", family="Georgia, serif"),
+        font=dict(color="#E8EFE9", family="'Plus Jakarta Sans', sans-serif"),
+        title_font=dict(family="'Cinzel', serif", color="#D4AF37", size=18),
         margin=dict(l=20, r=20, t=50, b=20)
     )
     fig_scatter.update_xaxes(showgrid=True, gridcolor="#1B3B2B", color="#A3C1AD")
@@ -248,25 +242,50 @@ def build_forest_dashboard(trials_df: pd.DataFrame, market_df: pd.DataFrame, out
     phase_chart_html = fig_phase.to_html(full_html=False, include_plotlyjs="cdn")
     scatter_chart_html = fig_scatter.to_html(full_html=False, include_plotlyjs="cdn")
 
-    # HTML Tables
-    table_market = market_df.to_html(index=False, classes="forest-table")
-    
-    display_trials = trials_df[["nct_id", "brief_title", "overall_status", "phase", "lead_sponsor_name"]].head(12)
-    display_trials.columns = ["NCTId", "BriefTitle", "OverallStatus", "Phase", "LeadSponsorName"]
-    table_trials = display_trials.to_html(index=False, classes="forest-table")
+    # Prepare Market Table HTML
+    table_market_rows = ""
+    for _, row in market_df.iterrows():
+        table_market_rows += f"""
+        <tr>
+            <td><strong>{row['Gene Target']}</strong></td>
+            <td>{row['Target Indication']}</td>
+            <td>{row['Active Trials']}</td>
+            <td>{row['Patent Count']:,}</td>
+            <td>{row['Prevalence Index']}</td>
+            <td style="color: #D4AF37; font-weight: bold;">{row['Opportunity Score']}</td>
+        </tr>
+        """
+
+    # Prepare Trial Rows with JavaScript Search Support
+    display_trials = trials_df[["nct_id", "brief_title", "overall_status", "phase", "lead_sponsor_name"]]
+    trial_rows_html = ""
+    for _, row in display_trials.iterrows():
+        status_color = "#52B788" if "RECRUITING" in str(row['overall_status']).upper() else "#A3C1AD"
+        trial_rows_html += f"""
+        <tr class="trial-row">
+            <td><code style="color: #74C69D;">{row['nct_id']}</code></td>
+            <td>{row['brief_title']}</td>
+            <td><span class="badge" style="border: 1px solid {status_color}; color: {status_color};">{row['overall_status']}</span></td>
+            <td>{row['phase']}</td>
+            <td>{row['lead_sponsor_name']}</td>
+        </tr>
+        """
 
     top_opportunity = market_df.loc[market_df["Opportunity Score"].idxmax()]["Gene Target"] if not market_df.empty else "N/A"
 
-    # Botanical / Forest Theme CSS & HTML Structure
     html_template = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gene Editing Market & Clinical Intelligence</title>
+    <title>Gene Editing Intelligence & Market Dashboard</title>
+    <!-- Google Fonts Integration -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Plus+Jakarta+Sans:wght@300;400;600;700&display=swap" rel="stylesheet">
     <style>
         :root {{
-            --bg-deep-forest: #0A1C14;
+            --bg-deep-forest: #0B1912;
             --bg-card: #13271D;
             --border-moss: #224030;
             --text-main: #E8EFE9;
@@ -275,43 +294,48 @@ def build_forest_dashboard(trials_df: pd.DataFrame, market_df: pd.DataFrame, out
             --accent-emerald: #52B788;
         }}
 
+        * {{
+            box-sizing: border-box;
+        }}
+
         body {{
             background-color: var(--bg-deep-forest);
             color: var(--text-main);
-            font-family: 'Segoe UI', Georgia, serif;
+            font-family: 'Plus Jakarta Sans', sans-serif;
             margin: 0;
             padding: 30px;
-            background-image: radial-gradient(circle at 50% 0%, #153324 0%, #0A1C14 75%);
+            background-image: radial-gradient(circle at 50% 0%, #173827 0%, #0B1912 80%);
         }}
 
         .container {{
-            max-width: 1280px;
+            max-width: 1300px;
             margin: 0 auto;
         }}
 
         header {{
-            border-bottom: 2px solid var(--border-moss);
+            border-bottom: 1px solid var(--border-moss);
             padding-bottom: 20px;
             margin-bottom: 30px;
         }}
 
         h1 {{
-            font-size: 2.2rem;
+            font-family: 'Cinzel', serif;
+            font-size: 2.4rem;
             color: var(--accent-gold);
-            margin: 0 0 8px 0;
-            font-weight: 400;
+            margin: 0 0 6px 0;
             letter-spacing: 1px;
         }}
 
-        p.subtitle {{
+        .subtitle {{
             color: var(--text-muted);
             margin: 0;
-            font-size: 1rem;
+            font-size: 0.95rem;
+            font-weight: 300;
         }}
 
         .kpi-grid {{
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
             gap: 20px;
             margin-bottom: 30px;
         }}
@@ -319,21 +343,21 @@ def build_forest_dashboard(trials_df: pd.DataFrame, market_df: pd.DataFrame, out
         .kpi-card {{
             background: var(--bg-card);
             border: 1px solid var(--border-moss);
-            border-radius: 8px;
+            border-radius: 10px;
             padding: 20px;
             text-align: center;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.25);
         }}
 
         .kpi-value {{
             font-size: 2.2rem;
-            font-weight: bold;
+            font-weight: 700;
             color: var(--accent-emerald);
             margin-bottom: 4px;
         }}
 
         .kpi-label {{
-            font-size: 0.85rem;
+            font-size: 0.8rem;
             color: var(--text-muted);
             text-transform: uppercase;
             letter-spacing: 1px;
@@ -342,18 +366,17 @@ def build_forest_dashboard(trials_df: pd.DataFrame, market_df: pd.DataFrame, out
         .content-card {{
             background: var(--bg-card);
             border: 1px solid var(--border-moss);
-            border-radius: 8px;
+            border-radius: 10px;
             padding: 24px;
             margin-bottom: 30px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.25);
         }}
 
-        h3 {{
+        h2, h3 {{
+            font-family: 'Cinzel', serif;
             color: var(--accent-gold);
             margin-top: 0;
-            font-weight: 400;
-            border-bottom: 1px solid var(--border-moss);
-            padding-bottom: 10px;
+            font-weight: 600;
         }}
 
         .grid-2col {{
@@ -366,14 +389,16 @@ def build_forest_dashboard(trials_df: pd.DataFrame, market_df: pd.DataFrame, out
             .grid-2col {{ grid-template-columns: 1fr; }}
         }}
 
-        .forest-table {{
+        /* Table Styling */
+        table {{
             width: 100%;
             border-collapse: collapse;
             margin-top: 15px;
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }}
 
-        .forest-table th {{
+        th {{
+            font-family: 'Cinzel', serif;
             background-color: #1A3628;
             color: var(--accent-gold);
             text-align: left;
@@ -381,14 +406,39 @@ def build_forest_dashboard(trials_df: pd.DataFrame, market_df: pd.DataFrame, out
             border-bottom: 2px solid var(--border-moss);
         }}
 
-        .forest-table td {{
-            padding: 10px 12px;
+        td {{
+            padding: 12px;
             border-bottom: 1px solid var(--border-moss);
             color: var(--text-main);
         }}
 
-        .forest-table tr:hover {{
-            background-color: #193325;
+        tr:hover {{
+            background-color: #183325;
+        }}
+
+        .badge {{
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }}
+
+        /* Interactive Controls */
+        .search-box {{
+            width: 100%;
+            padding: 12px 16px;
+            background: #0B1912;
+            border: 1px solid var(--border-moss);
+            border-radius: 6px;
+            color: var(--text-main);
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: 0.95rem;
+            margin-bottom: 15px;
+            outline: none;
+        }}
+
+        .search-box:focus {{
+            border-color: var(--accent-emerald);
         }}
 
         footer {{
@@ -404,40 +454,56 @@ def build_forest_dashboard(trials_df: pd.DataFrame, market_df: pd.DataFrame, out
 <body>
     <div class="container">
         <header>
-            <h1>Gene Editing Intelligence Dashboard</h1>
-            <p class="subtitle">Clinical Trial Extraction (NCTId, Title, Status, Phase, Sponsor) & Market Opportunity Analysis</p>
+            <h1>Gene Editing Market & Clinical Intelligence</h1>
+            <p class="subtitle">Extracting NCTId, BriefTitle, OverallStatus, Phase, and LeadSponsorName via ClinicalTrials.gov API</p>
         </header>
 
-        <!-- KPI Summary Cards -->
+        <!-- KPI Summary Bar -->
         <div class="kpi-grid">
             <div class="kpi-card">
                 <div class="kpi-value">{len(trials_df)}</div>
-                <div class="kpi-label">Extracted Clinical Studies</div>
+                <div class="kpi-label">Studies Extracted</div>
             </div>
             <div class="kpi-card">
                 <div class="kpi-value">{len(MARKET_RESEARCH_GENES)}</div>
-                <div class="kpi-label">Target Genes Tracked</div>
+                <div class="kpi-label">Gene Targets Tracked</div>
             </div>
             <div class="kpi-card">
                 <div class="kpi-value">{market_df['Patent Count'].sum():,}</div>
-                <div class="kpi-label">Indexed IP Patents</div>
+                <div class="kpi-label">Total IP Patents</div>
             </div>
             <div class="kpi-card">
                 <div class="kpi-value">{top_opportunity}</div>
-                <div class="kpi-label">Highest Opportunity Target</div>
+                <div class="kpi-label">Top Market Target</div>
             </div>
         </div>
 
-        <!-- Step 3: Market Research Table -->
+        <!-- Step 3: Market Opportunity Matrix -->
         <div class="content-card">
-            <h3>Target Gene Market Opportunity Index</h3>
-            <p style="color: var(--text-muted); font-size: 0.9rem;">Calculated using disease prevalence relative to clinical saturation and patent density.</p>
+            <h3>Gene Target Opportunity Index</h3>
+            <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 15px;">
+                Opportunity Index = Disease Prevalence Score / [(Active Trials + 1) × log10(Patents + 10)]
+            </p>
             <div style="overflow-x: auto;">
-                {table_market}
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Gene Target</th>
+                            <th>Target Indication</th>
+                            <th>Active Trials</th>
+                            <th>Patent Count</th>
+                            <th>Prevalence Index</th>
+                            <th>Opportunity Score</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {table_market_rows}
+                    </tbody>
+                </table>
             </div>
         </div>
 
-        <!-- Charts Grid -->
+        <!-- Visual Analytics -->
         <div class="grid-2col">
             <div class="content-card">
                 {phase_chart_html}
@@ -447,19 +513,45 @@ def build_forest_dashboard(trials_df: pd.DataFrame, market_df: pd.DataFrame, out
             </div>
         </div>
 
-        <!-- Step 2: Extracted Trial Data Table -->
+        <!-- Step 2: Extracted Clinical Trial Data with Live Filter -->
         <div class="content-card">
-            <h3>Extracted Clinical Trial Data (ClinicalTrials.gov)</h3>
-            <p style="color: var(--text-muted); font-size: 0.9rem;">Displaying extracted fields: NCTId, BriefTitle, OverallStatus, Phase, and LeadSponsorName.</p>
+            <h3>Extracted Clinical Trials</h3>
+            <input type="text" id="trialSearch" class="search-box" placeholder="Type to filter trials by keyword, status, sponsor, or NCT ID..." onkeyup="filterTrials()">
             <div style="overflow-x: auto;">
-                {table_trials}
+                <table id="trialsTable">
+                    <thead>
+                        <tr>
+                            <th>NCTId</th>
+                            <th>BriefTitle</th>
+                            <th>OverallStatus</th>
+                            <th>Phase</th>
+                            <th>LeadSponsorName</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {trial_rows_html}
+                    </tbody>
+                </table>
             </div>
         </div>
 
         <footer>
-            Automated Gene Editing Pipeline &bull; ClinicalTrials.gov API & Europe PMC Patent API Integration
+            Botanical Market Dashboard &bull; ClinicalTrials.gov API v2 & Europe PMC Integration
         </footer>
     </div>
+
+    <!-- JavaScript Live Search -->
+    <script>
+        function filterTrials() {{
+            const query = document.getElementById('trialSearch').value.toLowerCase();
+            const rows = document.querySelectorAll('#trialsTable tbody tr');
+            
+            rows.forEach(row => {{
+                const text = row.innerText.toLowerCase();
+                row.style.display = text.includes(query) ? '' : 'none';
+            }});
+        }}
+    </script>
 </body>
 </html>
 """
@@ -467,7 +559,13 @@ def build_forest_dashboard(trials_df: pd.DataFrame, market_df: pd.DataFrame, out
     with open(output_filepath, "w", encoding="utf-8") as f:
         f.write(html_template)
 
-    logging.info(f"[Step 4 Complete] Website successfully generated: '{output_filepath}'")
+    logging.info(f"[Step 4 Complete] Dashboard saved to '{output_filepath}'.")
+    
+    # Automatically open in browser
+    try:
+        webbrowser.open("file://" + os.path.realpath(output_filepath))
+    except Exception:
+        pass
 
 
 # =====================================================================
@@ -478,17 +576,16 @@ if __name__ == "__main__":
     search_keywords = ["CRISPR", "Gene Editing", "Base Editing"]
     gene_targets = list(MARKET_RESEARCH_GENES.keys())
 
-    # 1) API Connection & Search Working
-    # 2) Data Extraction Working (NCTId, BriefTitle, OverallStatus, Phase, LeadSponsorName)
-    trials_data = fetch_clinical_trials(search_keywords, max_pages_per_keyword=2)
+    # Step 1 & 2: API Search & Field Extraction
+    trials_df = fetch_clinical_trials(search_keywords, max_pages_per_keyword=2)
 
-    # 3) Market Research Gathered (Europe PMC Patents + Prevalence)
+    # Step 3: Market Research
     patent_counts = fetch_patent_data(gene_targets)
-    market_analytics = analyze_market_opportunity(trials_data, patent_counts)
+    market_df = analyze_market_opportunity(trials_df, patent_counts)
 
-    # Export structured raw datasets
-    trials_data.to_csv("trials_dataset.csv", index=False)
-    market_analytics.to_csv("opportunity_matrix.csv", index=False)
+    # Export Datasets
+    trials_df.to_csv("trials_dataset.csv", index=False)
+    market_df.to_csv("opportunity_matrix.csv", index=False)
 
-    # 4) Website Built Displaying the Data (Forest Aesthetic)
-    build_forest_dashboard(trials_data, market_analytics, output_filepath="crispr_dashboard.html")
+    # Step 4: Build & Launch Forest/Botanical Dashboard
+    build_forest_dashboard(trials_df, market_df, output_filepath="crispr_dashboard.html")
