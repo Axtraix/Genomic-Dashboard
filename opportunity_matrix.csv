@@ -1,4 +1,4 @@
-Gene Target,Indication,Active Trials,Patent Count,Prevalence Score,Opportunity Index
+Gene Target,Target Indication,Active Trials,Patent Count,Prevalence Index,Opportunity Score
 PCSK9,Hypercholesterolemia,0,0,9.5,9.5
 HTT,Huntington's Disease,0,0,4.0,4.0
 HBB,Sickle Cell / Thalassemia,1,0,8.0,4.0
