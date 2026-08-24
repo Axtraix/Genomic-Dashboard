@@ -15,9 +15,9 @@
     </div>
 
     <script>
-        const url = "https://clinicaltrials.gov/api/v2/studies?query.cond=Diabetes&filter.overallStatus=RECRUITING&pageSize=5";
+        const url = "https://clinicaltrials.gov/api/v2/studies?query.cond=Diabetes&filter.overallStatus=RECRUITING&pageSize=5"; <!---Connects to APi-->
 
-        fetch(url)
+        fetch(url)<!---Displays it-->
             .then(response => response.json())
             .then(data => {
                 // Print the unformatted raw text directly on screen

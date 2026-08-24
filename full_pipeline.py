@@ -5,12 +5,12 @@ import requests
 # Initialize the Flask web application
 app = Flask(__name__)
 
-# Define the root route ("/") that triggers when visiting the website
+# Define the root route that runs when visiting the website
 @app.route("/")
 def dashboard():
-   # Base API endpoint for fetching clinical study data
+   # Base API endpoint for getting info from clinical study data
     url = "https://clinicaltrials.gov/api/v2/studies"
-    # Query parameters to filter results (recruiting diabetes studies, limit to 5)
+    # filter results 
     params = {
         "query.cond": "Diabetes",
         "filter.overallStatus": "RECRUITING",
@@ -22,17 +22,17 @@ def dashboard():
     # List to hold processed study details for the frontend
     studies = []
 
-    # Check if the API request was successful (HTTP status 200)
+    # Check if API works
     if response.status_code == 200:
         data = response.json()
         raw_studies = data.get('studies', [])
-        # Parse the JSON response body
+       
         for s in raw_studies:
             protocol = s.get('protocolSection', {})
             id_mod = protocol.get('identificationModule', {})
             status_mod = protocol.get('statusModule', {})
 
-            # Extract relevant fields and append them as a dictionary to our list
+           
             studies.append({
                 "nct_id": id_mod.get('nctId', 'N/A'),
                 "title": id_mod.get('briefTitle', 'N/A'),
