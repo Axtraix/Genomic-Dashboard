@@ -1,31 +1,52 @@
 <!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-</head>
-<body>
-    <div>
-        <div>
-            <div>
-                <!-- Raw API data will render here -->
-                <pre id="api-data"></pre>
-            </div>
-        </div>
+<body class="bg-light">
+    <div class="container my-5">
+        <h2 class="mb-4 text-center">Clinical Trials Dashboard</h2>
+        
+        <!-- Pass dynamic content into a styled grid container -->
+        <div id="studies-container" class="row g-4"></div>
     </div>
-
     <script>
-        const url = "https://clinicaltrials.gov/api/v2/studies?query.cond=Diabetes&filter.overallStatus=RECRUITING&pageSize=5"; <!---Connects to APi-->
+        const url = "https://clinicaltrials.gov/api/v2/studies?query.cond=Diabetes&filter.overallStatus=RECRUITING&pageSize=5";
 
-        fetch(url)<!---Displays it-->
+        fetch(url)
             .then(response => response.json())
             .then(data => {
-                // Print the unformatted raw text directly on screen
-                document.getElementById('api-data').innerText = JSON.stringify(data);
+                const container = document.getElementById('studies-container');
+                const studies = data.studies || [];
+
+                if (studies.length === 0) {
+                    container.innerHTML = `<div class="col-12"><div class="alert alert-warning">No studies found.</div></div>`;
+                    return;
+                }
+
+                container.innerHTML = studies.map(s => {
+                    const protocol = s.protocolSection || {};
+                    const idMod = protocol.identificationModule || {};
+                    const statusMod = protocol.statusModule || {};
+
+                    const nctId = idMod.nctId || 'N/A';
+                    const title = idMod.briefTitle || 'No title provided';
+                    const status = statusMod.overallStatus || 'UNKNOWN';
+
+                    return `
+                        <div class="col-md-6 col-lg-4">
+                            <div class="card h-100 shadow-sm border-0">
+                                <div class="card-body d-flex flex-column">
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <span class="badge bg-secondary">${nctId}</span>
+                                        <span class="badge bg-success">${status}</span>
+                                    </div>
+                                    <h5 class="card-title text-dark fs-6 mt-2">${title}</h5>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
             })
             .catch(error => {
-                document.getElementById('api-data').innerText = "Error loading data: " + error;
+                const container = document.getElementById('studies-container');
+                container.innerHTML = `<div class="col-12"><div class="alert alert-danger">Failed to load data: ${error}</div></div>`;
             });
     </script>
 </body>
-</html>
