@@ -1,46 +1,85 @@
-# Import necessary modules: Flask for web serving, requests for fetching API data
-from flask import Flask, render_template
+import re
 import requests
+from typing import List, Dict, Set
 
-# Initialize the Flask web application
-app = Flask(__name__)
+# Standard HGNC gene symbol regex (2-8 uppercase letters/numbers starting with a letter)
+GENE_SYMBOL_REGEX = r'\b[A-Z][A-Z0-9]{1,7}\b'
 
-# Define the root route that runs when visiting the website
-@app.route("/")
-def dashboard():
-   # Base API endpoint for getting info from clinical study data
-    url = "https://clinicaltrials.gov/api/v2/studies"
-    # filter results 
+# Optional target reference set to eliminate common acronym false positives (e.g., DNA, RNA, USA, Phase)
+KNOWN_GENES = {"PCSK9", "HTT", "HBB", "TTR", "ANGPTL3", "DNMT1", "CFTR", "BRCA1", "EGFR"}
+
+def extract_gene_symbols(text: str, enforce_whitelist: bool = True) -> List[str]:
+    """
+    Extracts potential gene symbols from clinical trial titles and descriptions.
+    """
+    if not text:
+        return []
+    
+    # Extract all uppercase candidate tokens
+    candidates = set(re.findall(GENE_SYMBOL_REGEX, text))
+    
+    if enforce_whitelist:
+        # Filter candidate tokens against known gene database
+        found_genes = candidates.intersection(KNOWN_GENES)
+    else:
+        # Filter out common non-gene acronym noise
+        noise_words = {"DNA", "RNA", "FDA", "NCT", "USA", "NIH", "OR", "AND", "NOT", "I", "II", "III", "IV"}
+        found_genes = candidates - noise_words
+
+    return sorted(list(found_genes))
+
+
+def fetch_europe_pmc_patents(gene_symbol: str) -> Dict[str, any]:
+    """
+    Queries the Europe PMC REST API for patent literature matching 
+    a given gene symbol and CRISPR/Gene Editing keywords.
+    """
+    url = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
+    query_str = f'SRC:PAT AND ("CRISPR" OR "Gene Editing") AND "{gene_symbol}"'
+    
     params = {
-        "query.cond": "Diabetes",
-        "filter.overallStatus": "RECRUITING",
-        "pageSize": 5
+        "query": query_str,
+        "format": "json",
+        "pageSize": 50,
+        "resultType": "core"  # Ensures full record details are returned
     }
-
-    # Send a GET request to the ClinicalTrials.gov API
-    response = requests.get(url, params=params)
-    # List to hold processed study details for the frontend
-    studies = []
-
-    # Check if API works
-    if response.status_code == 200:
+    
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
         data = response.json()
-        raw_studies = data.get('studies', [])
-       
-        for s in raw_studies:
-            protocol = s.get('protocolSection', {})
-            id_mod = protocol.get('identificationModule', {})
-            status_mod = protocol.get('statusModule', {})
+        
+        # Total number of matching patents found in Europe PMC
+        total_hits = data.get("hitCount", 0)
+        
+        # List of actual patent records returned (up to 50)
+        patent_list = data.get("resultList", {}).get("result", [])
+        
+        return {
+            "total_count": total_hits,
+            "retrieved_records_count": len(patent_list),
+            "patents": patent_list
+        }
+    except requests.RequestException as e:
+        print(f"API Error fetching patents for {gene_symbol}: {e}")
+        return {"total_count": 0, "retrieved_records_count": 0, "patents": []}
 
-           
-            studies.append({
-                "nct_id": id_mod.get('nctId', 'N/A'),
-                "title": id_mod.get('briefTitle', 'N/A'),
-                "status": status_mod.get('overallStatus', 'N/A')
-            })
+# =====================================================================
+# EXAMPLE INTEGRATION
+# =====================================================================
 
-# Pass the processed studies list to the HTML template for rendering
-    return render_template("dashboard.html", studies=studies)
+sample_study_title = "A Phase 1 Study Evaluating Base Editing targeting PCSK9 and ANGPTL3 in Patients"
+sample_description = "Investigating CRISPR-Cas9 therapeutic interventions for HTT gene silencing."
 
-if __name__ == "__main__":
-    app.run(debug=True)
+full_text = f"{sample_study_title} {sample_description}"
+
+# 1. Parse Genes
+detected_genes = extract_gene_symbols(full_text, enforce_whitelist=True)
+print(f"Detected Gene Targets: {detected_genes}")
+
+# 2. Fetch Patent Saturation per Gene
+patent_results: Dict[str, int] = {}
+for gene in detected_genes:
+    patent_results[gene] = fetch_europe_pmc_patents(gene)
+
+print("Patent Saturation Results:", patent_results)
